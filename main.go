@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"log"
+	"net"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -29,6 +31,10 @@ func main() {
 	}
 
 	fmt.Println("Bot is running. Press CTRL+C to exit.")
+
+	// Start HTTP server
+	go startHTTPServer()
+
 	select {}
 }
 
@@ -61,6 +67,13 @@ func getCurrentTimezone(s *discordgo.Session, m *discordgo.MessageCreate) {
 	s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Current timezone: %s", serverTimezone.String()))
 }
 
+var announcementTime string
+
+func setAnnouncementTime(s *discordgo.Session, m *discordgo.MessageCreate, time string) {
+	announcementTime = time
+	s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Announcement time set to %s", time))
+}
+
 func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 	if m.Author.ID == s.State.User.ID {
 		return
@@ -91,5 +104,47 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 	if m.Content == "!timezone" {
 		getCurrentTimezone(s, m)
 		return
+	}
+
+	if strings.HasPrefix(m.Content, "!set_announcement_time ") {
+		time := strings.TrimPrefix(m.Content, "!set_announcement_time ")
+		setAnnouncementTime(s, m, time)
+		return
+	}
+}
+
+func startHTTPServer() {
+	http.HandleFunc("/ping", func(w http.ResponseWriter, r *http.Request) {
+		// Respond with the custom HTML content
+		htmlContent := `<html><body><h1>GameNight Bot - GEROGIANNIS</h1></body></html>`
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(htmlContent))
+
+		// Log the remote address that sent the ping request
+		log.Printf("Received ping from: %s", r.RemoteAddr)
+	})
+
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+
+	// Get and print the server's IP addresses
+	addresses, err := net.InterfaceAddrs()
+	if err != nil {
+		log.Fatal("Error getting network interfaces:", err)
+	}
+	for _, address := range addresses {
+		// Check if the address is not a loopback address and is an IP address
+		if ipNet, ok := address.(*net.IPNet); ok && !ipNet.IP.IsLoopback() {
+			if ipNet.IP.To4() != nil {
+				log.Printf("HTTP server will be accessible on: http://%s:%s/ping", ipNet.IP.String(), port)
+			}
+		}
+	}
+
+	log.Printf("HTTP server listening on port %s", port)
+	if err := http.ListenAndServe(":"+port, nil); err != nil {
+		log.Fatal("Error starting HTTP server:", err)
 	}
 }
