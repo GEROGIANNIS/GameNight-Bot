@@ -6,7 +6,6 @@ GameNight Bot is designed to organize nightly game sessions within a Discord ser
 ## Commands
 
 - `!ping`: Test if the bot is responding.
-- `!miaou`: Get a fun response from the bot.
 - `!set_timezone [timezone]`: Set the timezone for the server (e.g., `!set_timezone America/New_York`).
 - `!time`: Get the current time based on the server's timezone.
 - `!timezone`: Display the current timezone set for the server.
