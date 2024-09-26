@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"math/rand"
 
 	"github.com/bwmarrin/discordgo"
 )
@@ -50,6 +51,27 @@ func setTimezone(s *discordgo.Session, m *discordgo.MessageCreate, timezone stri
 	s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Timezone set to %s", timezone))
 }
 
+var games []string
+
+func listGames(s *discordgo.Session, m *discordgo.MessageCreate, action, game string) {
+	switch action {
+	case "add":
+		games = append(games, game)
+		s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Game %s added to the list", game))
+	case "remove":
+		for i, g := range games {
+			if g == game {
+				games = append(games[:i], games[i+1:]...)
+				s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Game %s removed from the list", game))
+				return
+			}
+		}
+		s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Game %s not found in the list", game))
+	default:
+		s.ChannelMessageSend(m.ChannelID, "Invalid action. Use add/remove.")
+	}
+}
+
 func getCurrentTime(s *discordgo.Session, m *discordgo.MessageCreate) {
 	if serverTimezone == nil {
 		s.ChannelMessageSend(m.ChannelID, "Timezone not set. Use !set_timezone to set the timezone.")
@@ -72,6 +94,16 @@ var announcementTime string
 func setAnnouncementTime(s *discordgo.Session, m *discordgo.MessageCreate, time string) {
 	announcementTime = time
 	s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Announcement time set to %s", time))
+}
+
+func announceGame(s *discordgo.Session) {
+	rand.Seed(time.Now().UnixNano())
+	if len(games) == 0 {
+		s.ChannelMessageSend("general", "No games available to announce.")
+		return
+	}
+	selectedGame := games[rand.Intn(len(games))]
+	s.ChannelMessageSend("general", fmt.Sprintf("Tonight's game is %s! Click 'Join' if you have the game.", selectedGame))
 }
 
 func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
@@ -111,6 +143,20 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 		setAnnouncementTime(s, m, time)
 		return
 	}
+	if strings.HasPrefix(m.Content, "!list_games ") {
+		parts := strings.Fields(m.Content)
+		if len(parts) < 3 {
+			s.ChannelMessageSend(m.ChannelID, "Usage: !list_games [add/remove] [game]")
+			return
+		}
+		action := parts[1]
+		game := strings.Join(parts[2:], " ")
+		listGames(s, m, action, game)
+		return
+	}
+
+	
+	
 }
 
 func startHTTPServer() {
