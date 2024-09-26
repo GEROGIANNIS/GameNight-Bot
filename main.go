@@ -1,17 +1,26 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"math/rand"
-	"net"
-	"net/http"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/bwmarrin/discordgo"
 )
+
+type Config struct {
+	Games        []string `json:"games"`
+	Timezone     string   `json:"timezone"`
+	Announcement string   `json:"announcement"`
+}
+
+var configFileTemplate = "config_%s.json" // Template for config file names
+var config Config
+var serverTimezone *time.Location
 
 func main() {
 	token := os.Getenv("DISCORD_TOKEN")
@@ -33,13 +42,40 @@ func main() {
 
 	fmt.Println("Bot is running. Press CTRL+C to exit.")
 
-	// Start HTTP server
-	go startHTTPServer()
-
 	select {}
 }
 
-var serverTimezone *time.Location
+func loadConfig(serverID string) {
+	configFile := fmt.Sprintf(configFileTemplate, serverID) // Create server-specific config file name
+	file, err := os.Open(configFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// File doesn't exist, initialize a new config
+			config = Config{}
+			saveConfig(serverID) // Create the file with empty values
+			return
+		}
+		log.Fatal("Error opening config file:", err)
+	}
+	defer file.Close()
+
+	if err := json.NewDecoder(file).Decode(&config); err != nil {
+		log.Fatal("Error decoding config file:", err)
+	}
+}
+
+func saveConfig(serverID string) {
+	configFile := fmt.Sprintf(configFileTemplate, serverID) // Create server-specific config file name
+	file, err := os.Create(configFile)
+	if err != nil {
+		log.Fatal("Error creating config file:", err)
+	}
+	defer file.Close()
+
+	if err := json.NewEncoder(file).Encode(config); err != nil {
+		log.Fatal("Error encoding config file:", err)
+	}
+}
 
 func setTimezone(s *discordgo.Session, m *discordgo.MessageCreate, timezone string) {
 	loc, err := time.LoadLocation(timezone)
@@ -47,38 +83,40 @@ func setTimezone(s *discordgo.Session, m *discordgo.MessageCreate, timezone stri
 		s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Invalid timezone: %s", timezone))
 		return
 	}
+	config.Timezone = timezone // Save timezone to config
+	saveConfig(m.GuildID)      // Persist changes for this server
 	serverTimezone = loc
 	s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Timezone set to %s", timezone))
 }
 
-var games []string
-
 func listGames(s *discordgo.Session, m *discordgo.MessageCreate, action, game string) {
 	switch action {
 	case "add":
-		for _, g := range games {
+		for _, g := range config.Games {
 			if g == game {
 				s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Game %s is already in the list.", game))
 				return
 			}
 		}
-		games = append(games, game)
+		config.Games = append(config.Games, game)
+		saveConfig(m.GuildID) // Persist changes for this server
 		s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Game %s added to the list", game))
 	case "remove":
-		for i, g := range games {
+		for i, g := range config.Games {
 			if g == game {
-				games = append(games[:i], games[i+1:]...)
+				config.Games = append(config.Games[:i], config.Games[i+1:]...)
+				saveConfig(m.GuildID) // Persist changes for this server
 				s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Game %s removed from the list", game))
 				return
 			}
 		}
 		s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Game %s not found in the list", game))
 	case "list":
-		if len(games) == 0 {
+		if len(config.Games) == 0 {
 			s.ChannelMessageSend(m.ChannelID, "No games in the list.")
 		} else {
 			gameList := "Games in the list:\n"
-			for _, g := range games {
+			for _, g := range config.Games {
 				gameList += fmt.Sprintf("- %s\n", g)
 			}
 			s.ChannelMessageSend(m.ChannelID, gameList)
@@ -88,43 +126,46 @@ func listGames(s *discordgo.Session, m *discordgo.MessageCreate, action, game st
 	}
 }
 
-// New function to clear the games list
 func clearGames(s *discordgo.Session, m *discordgo.MessageCreate) {
-	games = []string{} // Reset the games slice to an empty slice
+	config.Games = []string{} // Reset the games slice to an empty slice
+	saveConfig(m.GuildID)     // Persist changes for this server
 	s.ChannelMessageSend(m.ChannelID, "All games have been cleared from the list.")
 }
 
 func getCurrentTime(s *discordgo.Session, m *discordgo.MessageCreate) {
-	if serverTimezone == nil {
+	if config.Timezone == "" {
 		s.ChannelMessageSend(m.ChannelID, "Timezone not set. Use !set_timezone to set the timezone.")
 		return
 	}
-	currentTime := time.Now().In(serverTimezone).Format("15:04:05 MST")
+	loc, _ := time.LoadLocation(config.Timezone)
+	currentTime := time.Now().In(loc).Format("15:04:05 MST")
 	s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Current time: %s", currentTime))
 }
 
 func getCurrentTimezone(s *discordgo.Session, m *discordgo.MessageCreate) {
-	if serverTimezone == nil {
+	if config.Timezone == "" {
 		s.ChannelMessageSend(m.ChannelID, "Timezone not set. Use !set_timezone to set the timezone.")
 		return
 	}
-	s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Current timezone: %s", serverTimezone.String()))
+	s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Current timezone: %s", config.Timezone))
 }
 
 var announcementTime string
 
 func setAnnouncementTime(s *discordgo.Session, m *discordgo.MessageCreate, time string) {
 	announcementTime = time
+	config.Announcement = time // Save announcement time to config
+	saveConfig(m.GuildID)      // Persist changes for this server
 	s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Announcement time set to %s", time))
 }
 
 func announceGame(s *discordgo.Session, channelID string) {
 	rand.Seed(time.Now().UnixNano())
-	if len(games) == 0 {
+	if len(config.Games) == 0 {
 		s.ChannelMessageSend(channelID, "No games available to announce.")
 		return
 	}
-	selectedGame := games[rand.Intn(len(games))]
+	selectedGame := config.Games[rand.Intn(len(config.Games))]
 	s.ChannelMessageSend(channelID, fmt.Sprintf("Tonight's game is %s! Click 'Join' if you have the game.", selectedGame))
 }
 
@@ -132,6 +173,9 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 	if m.Author.ID == s.State.User.ID {
 		return
 	}
+
+	// Load the config specific to the server
+	loadConfig(m.GuildID)
 
 	if m.Content == "!ping" {
 		s.ChannelMessageSend(m.ChannelID, "Pong!")
@@ -192,41 +236,5 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 
 		listGames(s, m, action, game)
 		return
-	}
-}
-
-func startHTTPServer() {
-	http.HandleFunc("/ping", func(w http.ResponseWriter, r *http.Request) {
-		// Respond with the custom HTML content
-		htmlContent := `<html><body><h1>GameNight Bot - GEROGIANNIS</h1></body></html>`
-		w.Header().Set("Content-Type", "text/html")
-		w.Write([]byte(htmlContent))
-
-		// Log the remote address that sent the ping request
-		log.Printf("Received ping from: %s", r.RemoteAddr)
-	})
-
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
-	}
-
-	// Get and print the server's IP addresses
-	addresses, err := net.InterfaceAddrs()
-	if err != nil {
-		log.Fatal("Error getting network interfaces:", err)
-	}
-	for _, address := range addresses {
-		// Check if the address is not a loopback address and is an IP address
-		if ipNet, ok := address.(*net.IPNet); ok && !ipNet.IP.IsLoopback() {
-			if ipNet.IP.To4() != nil {
-				log.Printf("HTTP server will be accessible on: http://%s:%s/ping", ipNet.IP.String(), port)
-			}
-		}
-	}
-
-	log.Printf("HTTP server listening on port %s", port)
-	if err := http.ListenAndServe(":"+port, nil); err != nil {
-		log.Fatal("Error starting HTTP server:", err)
 	}
 }
