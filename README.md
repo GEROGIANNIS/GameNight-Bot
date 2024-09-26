@@ -1,10 +1,9 @@
-GameNight Bot
 
-GameNight Bot is designed to organize nightly game sessions within a Discord server.
-Each night, the bot announces a random game for the community to play, opening a dedicated voice channel for participants to join at midnight.
-This encourages regular gaming sessions, community bonding, and interactive fun.
+# GameNight Bot
 
-### Commands:
+GameNight Bot is designed to organize nightly game sessions within a Discord server. Each night, the bot announces a random game for the community to play, opening a dedicated voice channel for participants to join at midnight. This encourages regular gaming sessions, community bonding, and interactive fun.
+
+## Commands
 
 - `!ping`: Test if the bot is responding.
 - `!miaou`: Get a fun response from the bot.
@@ -15,6 +14,9 @@ This encourages regular gaming sessions, community bonding, and interactive fun.
 - `!games [add/remove/list] [game]`: Manage the list of games.
   - Example: `!games add Chess`, `!games remove Monopoly`, `!games list`.
 - `!clear_games`: Remove all games from the list.
+- `!join`: Confirm participation in the game night.
+- `!leave`: Leave the participation list.
+- `!participants`: List all users confirmed for participation.
 
 ## Configuration
 
@@ -23,6 +25,11 @@ The bot creates a separate configuration file for each server it is added to, na
 - **Games**: List of games for that server.
 - **Timezone**: The server's timezone setting.
 - **Announcement Time**: The time set for game night announcements.
+- **Participation List**: List of users who confirmed participation.
+
+## Acknowledgements
+
+- [DiscordGo](https://github.com/bwmarrin/discordgo) - The library used to interact with the Discord API.
 
 ## Contributing
 
@@ -31,7 +38,3 @@ If you'd like to contribute to this project, feel free to open an issue or submi
 ## License
 
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
-
-## Acknowledgements
-
-- [DiscordGo](https://github.com/bwmarrin/discordgo) - The library used to interact with the Discord API.
