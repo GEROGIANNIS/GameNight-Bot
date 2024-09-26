@@ -56,6 +56,12 @@ var games []string
 func listGames(s *discordgo.Session, m *discordgo.MessageCreate, action, game string) {
 	switch action {
 	case "add":
+		for _, g := range games {
+			if g == game {
+				s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Game %s is already in the list.", game))
+				return
+			}
+		}
 		games = append(games, game)
 		s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Game %s added to the list", game))
 	case "remove":
@@ -82,6 +88,12 @@ func listGames(s *discordgo.Session, m *discordgo.MessageCreate, action, game st
 	}
 }
 
+// New function to clear the games list
+func clearGames(s *discordgo.Session, m *discordgo.MessageCreate) {
+	games = []string{} // Reset the games slice to an empty slice
+	s.ChannelMessageSend(m.ChannelID, "All games have been cleared from the list.")
+}
+
 func getCurrentTime(s *discordgo.Session, m *discordgo.MessageCreate) {
 	if serverTimezone == nil {
 		s.ChannelMessageSend(m.ChannelID, "Timezone not set. Use !set_timezone to set the timezone.")
@@ -106,14 +118,14 @@ func setAnnouncementTime(s *discordgo.Session, m *discordgo.MessageCreate, time 
 	s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Announcement time set to %s", time))
 }
 
-func announceGame(s *discordgo.Session) {
+func announceGame(s *discordgo.Session, channelID string) {
 	rand.Seed(time.Now().UnixNano())
 	if len(games) == 0 {
-		s.ChannelMessageSend("general", "No games available to announce.")
+		s.ChannelMessageSend(channelID, "No games available to announce.")
 		return
 	}
 	selectedGame := games[rand.Intn(len(games))]
-	s.ChannelMessageSend("general", fmt.Sprintf("Tonight's game is %s! Click 'Join' if you have the game.", selectedGame))
+	s.ChannelMessageSend(channelID, fmt.Sprintf("Tonight's game is %s! Click 'Join' if you have the game.", selectedGame))
 }
 
 func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
@@ -153,6 +165,12 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 		setAnnouncementTime(s, m, time)
 		return
 	}
+
+	if strings.HasPrefix(m.Content, "!clear_games") {
+		clearGames(s, m)
+		return
+	}
+
 	if strings.HasPrefix(m.Content, "!games ") {
 		parts := strings.Fields(m.Content)
 		if len(parts) < 2 {
@@ -175,7 +193,6 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 		listGames(s, m, action, game)
 		return
 	}
-
 }
 
 func startHTTPServer() {
