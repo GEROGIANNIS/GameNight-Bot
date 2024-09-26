@@ -3,12 +3,12 @@ package main
 import (
 	"fmt"
 	"log"
+	"math/rand"
 	"net"
 	"net/http"
 	"os"
 	"strings"
 	"time"
-	"math/rand"
 
 	"github.com/bwmarrin/discordgo"
 )
@@ -67,8 +67,18 @@ func listGames(s *discordgo.Session, m *discordgo.MessageCreate, action, game st
 			}
 		}
 		s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Game %s not found in the list", game))
+	case "list":
+		if len(games) == 0 {
+			s.ChannelMessageSend(m.ChannelID, "No games in the list.")
+		} else {
+			gameList := "Games in the list:\n"
+			for _, g := range games {
+				gameList += fmt.Sprintf("- %s\n", g)
+			}
+			s.ChannelMessageSend(m.ChannelID, gameList)
+		}
 	default:
-		s.ChannelMessageSend(m.ChannelID, "Invalid action. Use add/remove.")
+		s.ChannelMessageSend(m.ChannelID, "Invalid action. Use add/remove/list.")
 	}
 }
 
@@ -143,20 +153,29 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 		setAnnouncementTime(s, m, time)
 		return
 	}
-	if strings.HasPrefix(m.Content, "!list_games ") {
+	if strings.HasPrefix(m.Content, "!games ") {
 		parts := strings.Fields(m.Content)
-		if len(parts) < 3 {
-			s.ChannelMessageSend(m.ChannelID, "Usage: !list_games [add/remove] [game]")
+		if len(parts) < 2 {
+			s.ChannelMessageSend(m.ChannelID, "Usage: !games [add/remove/list] [game]")
 			return
 		}
+
 		action := parts[1]
-		game := strings.Join(parts[2:], " ")
+
+		// Allow the "list" action without requiring a game
+		var game string
+		if action != "list" {
+			if len(parts) < 3 {
+				s.ChannelMessageSend(m.ChannelID, "Usage: !games [add/remove/list] [game]")
+				return
+			}
+			game = strings.Join(parts[2:], " ")
+		}
+
 		listGames(s, m, action, game)
 		return
 	}
 
-	
-	
 }
 
 func startHTTPServer() {
