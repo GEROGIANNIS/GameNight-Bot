@@ -13,9 +13,10 @@ import (
 )
 
 type Config struct {
-	Games        []string `json:"games"`
-	Timezone     string   `json:"timezone"`
-	Announcement string   `json:"announcement"` // Announcement time in "HH:MM" 24-hour format
+	Games             []string `json:"games"`
+	Timezone          string   `json:"timezone"`
+	Announcement      string   `json:"announcement"`  // Announcement time in "HH:MM" 24-hour format
+	ParticipationList []string `json:"participation"` // List of users who confirmed participation
 }
 
 var configFileTemplate = "config_%s.json"
@@ -93,7 +94,7 @@ func setAnnouncementTime(s *discordgo.Session, m *discordgo.MessageCreate, timeS
 	s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Announcement time set to %s", timeStr))
 }
 
-// Find the #Todays-Game channel in the guild and return its ID
+// Find the #todays-game channel in the guild and return its ID
 func findTodaysGameChannel(s *discordgo.Session, guildID string) (string, error) {
 	channels, err := s.GuildChannels(guildID)
 	if err != nil {
@@ -106,26 +107,36 @@ func findTodaysGameChannel(s *discordgo.Session, guildID string) (string, error)
 		}
 	}
 
-	return "", fmt.Errorf("todays-Game channel not found")
+	return "", fmt.Errorf("todays-game channel not found")
 }
 
-// Announce a game in the #Todays-Game channel
+// Announce a game in the #todays-game channel
+// Announce a game in the #todays-game channel
 func announceGame(s *discordgo.Session, guildID string) {
 	rand.Seed(time.Now().UnixNano())
 	if len(config.Games) == 0 {
 		log.Println("No games available to announce.")
+		// Find the #todays-game channel and announce that there are no games available
+		channelID, err := findTodaysGameChannel(s, guildID)
+		if err != nil {
+			log.Println("Error finding #todays-game channel:", err)
+			return
+		}
+		s.ChannelMessageSend(channelID, "No games available to announce today.")
 		return
 	}
 	selectedGame := config.Games[rand.Intn(len(config.Games))]
 
-	// Find the #Todays-Game channel and announce the game there
+	// Find the #todays-game channel and announce the game there
 	channelID, err := findTodaysGameChannel(s, guildID)
 	if err != nil {
 		log.Println("Error finding #todays-game channel:", err)
 		return
 	}
 
-	s.ChannelMessageSend(channelID, fmt.Sprintf("Tonight's game is %s! Click 'Join' if you have the game.", selectedGame))
+	// Announce the game and confirm participation
+	message := fmt.Sprintf("Tonight's game is **%s**! Use `!join` to confirm your participation.", selectedGame)
+	s.ChannelMessageSend(channelID, message)
 }
 
 // Start the announcement scheduler
@@ -236,79 +247,133 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 		listGames(s, m, action, game)
 		return
 	}
+
+	if m.Content == "!join" {
+		joinParticipation(s, m)
+		return
+	}
+
+	// Add the new command for participants
+	if m.Content == "!leave" {
+		leaveParticipation(s, m)
+		return
+	}
+
+	if m.Content == "!participants" {
+		listParticipants(s, m)
+		return
+	}
 }
 
 func setTimezone(s *discordgo.Session, m *discordgo.MessageCreate, timezone string) {
-	loc, err := time.LoadLocation(timezone)
+	// Validate timezone
+	_, err := time.LoadLocation(timezone)
 	if err != nil {
-		s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Invalid timezone: %s", timezone))
+		s.ChannelMessageSend(m.ChannelID, "Invalid timezone. Please provide a valid timezone.")
 		return
 	}
-	config.Timezone = timezone
-	saveConfig(m.GuildID)
-	serverTimezone = loc
+
+	config.Timezone = timezone // Save the timezone to config
+	saveConfig(m.GuildID)      // Persist changes for this server
 	s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Timezone set to %s", timezone))
 }
 
+func joinParticipation(s *discordgo.Session, m *discordgo.MessageCreate) {
+	userID := m.Author.ID
+
+	// Check if the user is already in the participation list
+	for _, participant := range config.ParticipationList {
+		if participant == userID {
+			s.ChannelMessageSend(m.ChannelID, "You have already confirmed participation.")
+			return
+		}
+	}
+
+	// Add user to the participation list
+	config.ParticipationList = append(config.ParticipationList, userID)
+	saveConfig(m.GuildID) // Persist changes for this server
+	s.ChannelMessageSend(m.ChannelID, "Participation confirmed!")
+}
+
+func leaveParticipation(s *discordgo.Session, m *discordgo.MessageCreate) {
+	userID := m.Author.ID
+
+	// Check if the user is in the participation list
+	for i, participant := range config.ParticipationList {
+		if participant == userID {
+			// Remove user from the participation list
+			config.ParticipationList = append(config.ParticipationList[:i], config.ParticipationList[i+1:]...)
+			saveConfig(m.GuildID) // Persist changes for this server
+			s.ChannelMessageSend(m.ChannelID, "You have left the participation list.")
+			return
+		}
+	}
+
+	s.ChannelMessageSend(m.ChannelID, "You are not in the participation list.")
+}
+
 func getCurrentTime(s *discordgo.Session, m *discordgo.MessageCreate) {
-	if config.Timezone == "" {
-		s.ChannelMessageSend(m.ChannelID, "Timezone not set. Use !set_timezone to set the timezone.")
+	loc, err := time.LoadLocation(config.Timezone)
+	if err != nil {
+		s.ChannelMessageSend(m.ChannelID, "Timezone not set or invalid.")
 		return
 	}
-	loc, _ := time.LoadLocation(config.Timezone)
-	currentTime := time.Now().In(loc).Format("15:04:05 MST")
+	currentTime := time.Now().In(loc).Format("15:04:05")
 	s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Current time: %s", currentTime))
 }
 
 func getCurrentTimezone(s *discordgo.Session, m *discordgo.MessageCreate) {
 	if config.Timezone == "" {
-		s.ChannelMessageSend(m.ChannelID, "Timezone not set. Use !set_timezone to set the timezone.")
+		s.ChannelMessageSend(m.ChannelID, "Timezone not set.")
 		return
 	}
 	s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Current timezone: %s", config.Timezone))
 }
 
-// Function for clearing all games
 func clearGames(s *discordgo.Session, m *discordgo.MessageCreate) {
-	config.Games = []string{} // Reset the games slice to an empty slice
-	saveConfig(m.GuildID)     // Persist changes for this server
-	s.ChannelMessageSend(m.ChannelID, "All games have been cleared from the list.")
+	config.Games = []string{}
+	saveConfig(m.GuildID)
+	s.ChannelMessageSend(m.ChannelID, "Game list cleared.")
 }
 
-// Reverting the game management logic to your original implementation
-func listGames(s *discordgo.Session, m *discordgo.MessageCreate, action, game string) {
+func listGames(s *discordgo.Session, m *discordgo.MessageCreate, action string, game string) {
 	switch action {
 	case "add":
-		for _, g := range config.Games {
-			if g == game {
-				s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Game %s is already in the list.", game))
-				return
-			}
-		}
 		config.Games = append(config.Games, game)
-		saveConfig(m.GuildID) // Persist changes for this server
-		s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Game %s added to the list", game))
+		saveConfig(m.GuildID)
+		s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Game %s added.", game))
 	case "remove":
 		for i, g := range config.Games {
 			if g == game {
-				config.Games = append(config.Games[:i], config.Games[i+1:]...)
-				saveConfig(m.GuildID) // Persist changes for this server
-				s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Game %s removed from the list", game))
+				config.Games = append(config.Games[:i], config.Games[i+1:]...) // Remove the game
+				saveConfig(m.GuildID)
+				s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Game %s removed.", game))
 				return
 			}
 		}
-		s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Game %s not found in the list", game))
+		s.ChannelMessageSend(m.ChannelID, "Game not found.")
 	case "list":
 		if len(config.Games) == 0 {
-			s.ChannelMessageSend(m.ChannelID, "No games in the list.")
-		} else {
-			gameList := "Games in the list:\n"
-			for _, g := range config.Games {
-				gameList += fmt.Sprintf("- %s\n", g)
-			}
-			s.ChannelMessageSend(m.ChannelID, gameList)
+			s.ChannelMessageSend(m.ChannelID, "No games available.")
+			return
 		}
+		gamesList := "Available games:\n" + strings.Join(config.Games, "\n")
+		s.ChannelMessageSend(m.ChannelID, gamesList)
 	default:
-		s.ChannelMessageSend(m.ChannelID, "Invalid action. Use add/remove/list.")
+		s.ChannelMessageSend(m.ChannelID, "Invalid action. Use add, remove, or list.")
 	}
+}
+
+func listParticipants(s *discordgo.Session, m *discordgo.MessageCreate) {
+	if len(config.ParticipationList) == 0 {
+		s.ChannelMessageSend(m.ChannelID, "No participants have confirmed participation yet.")
+		return
+	}
+
+	participants := "Participants:\n"
+	for _, participant := range config.ParticipationList {
+		participants += fmt.Sprintf("- <@%s>\n", participant) // Mention the user by their ID
+	}
+
+	s.ChannelMessageSend(m.ChannelID, participants)
 }
