@@ -15,10 +15,10 @@ import (
 type Config struct {
 	Games        []string `json:"games"`
 	Timezone     string   `json:"timezone"`
-	Announcement string   `json:"announcement"`
+	Announcement string   `json:"announcement"` // Announcement time in "HH:MM" 24-hour format
 }
 
-var configFileTemplate = "config_%s.json" // Template for config file names
+var configFileTemplate = "config_%s.json"
 var config Config
 var serverTimezone *time.Location
 
@@ -42,17 +42,19 @@ func main() {
 
 	fmt.Println("Bot is running. Press CTRL+C to exit.")
 
-	select {}
+	// Start the announcement checker in a separate goroutine
+	go startAnnouncementScheduler(bot)
+
+	select {} // Keep the program running
 }
 
 func loadConfig(serverID string) {
-	configFile := fmt.Sprintf(configFileTemplate, serverID) // Create server-specific config file name
+	configFile := fmt.Sprintf(configFileTemplate, serverID)
 	file, err := os.Open(configFile)
 	if err != nil {
 		if os.IsNotExist(err) {
-			// File doesn't exist, initialize a new config
 			config = Config{}
-			saveConfig(serverID) // Create the file with empty values
+			saveConfig(serverID)
 			return
 		}
 		log.Fatal("Error opening config file:", err)
@@ -65,7 +67,7 @@ func loadConfig(serverID string) {
 }
 
 func saveConfig(serverID string) {
-	configFile := fmt.Sprintf(configFileTemplate, serverID) // Create server-specific config file name
+	configFile := fmt.Sprintf(configFileTemplate, serverID)
 	file, err := os.Create(configFile)
 	if err != nil {
 		log.Fatal("Error creating config file:", err)
@@ -77,18 +79,203 @@ func saveConfig(serverID string) {
 	}
 }
 
+// Set the announcement time
+func setAnnouncementTime(s *discordgo.Session, m *discordgo.MessageCreate, timeStr string) {
+	announcementTime := timeStr
+	_, err := time.Parse("15:04", announcementTime) // Validate time format
+	if err != nil {
+		s.ChannelMessageSend(m.ChannelID, "Invalid time format. Please use HH:MM (24-hour format).")
+		return
+	}
+
+	config.Announcement = timeStr // Save announcement time to config
+	saveConfig(m.GuildID)         // Persist changes for this server
+	s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Announcement time set to %s", timeStr))
+}
+
+// Find the #Todays-Game channel in the guild and return its ID
+func findTodaysGameChannel(s *discordgo.Session, guildID string) (string, error) {
+	channels, err := s.GuildChannels(guildID)
+	if err != nil {
+		return "", fmt.Errorf("error retrieving channels: %v", err)
+	}
+
+	for _, channel := range channels {
+		if channel.Name == "todays-game" && channel.Type == discordgo.ChannelTypeGuildText {
+			return channel.ID, nil
+		}
+	}
+
+	return "", fmt.Errorf("todays-Game channel not found")
+}
+
+// Announce a game in the #Todays-Game channel
+func announceGame(s *discordgo.Session, guildID string) {
+	rand.Seed(time.Now().UnixNano())
+	if len(config.Games) == 0 {
+		log.Println("No games available to announce.")
+		return
+	}
+	selectedGame := config.Games[rand.Intn(len(config.Games))]
+
+	// Find the #Todays-Game channel and announce the game there
+	channelID, err := findTodaysGameChannel(s, guildID)
+	if err != nil {
+		log.Println("Error finding #todays-game channel:", err)
+		return
+	}
+
+	s.ChannelMessageSend(channelID, fmt.Sprintf("Tonight's game is %s! Click 'Join' if you have the game.", selectedGame))
+}
+
+// Start the announcement scheduler
+func startAnnouncementScheduler(s *discordgo.Session) {
+	for {
+		for _, guild := range s.State.Guilds {
+			loadConfig(guild.ID) // Load the config for each guild
+
+			if config.Announcement != "" && config.Timezone != "" {
+				loc, err := time.LoadLocation(config.Timezone)
+				if err != nil {
+					log.Println("Error loading timezone:", err)
+					time.Sleep(time.Minute)
+					continue
+				}
+
+				now := time.Now().In(loc)
+				announcementTime, err := time.ParseInLocation("15:04", config.Announcement, loc)
+				if err != nil {
+					log.Println("Error parsing announcement time:", err)
+					time.Sleep(time.Minute)
+					continue
+				}
+
+				// Adjust the announcement time to today
+				announcementTime = time.Date(now.Year(), now.Month(), now.Day(),
+					announcementTime.Hour(), announcementTime.Minute(), 0, 0, loc)
+
+				// If the current time is past today's announcement time, schedule for tomorrow
+				if now.After(announcementTime) {
+					announcementTime = announcementTime.Add(24 * time.Hour)
+				}
+
+				durationUntilNextAnnouncement := time.Until(announcementTime)
+				log.Printf("Next game announcement for guild %s scheduled in %s\n", guild.ID, durationUntilNextAnnouncement)
+
+				time.Sleep(durationUntilNextAnnouncement) // Sleep until the announcement time
+				announceGame(s, guild.ID)                 // Announce game dynamically using the guild ID
+			} else {
+				log.Printf("No announcement time or timezone set for guild %s.\n", guild.ID)
+			}
+		}
+
+		time.Sleep(time.Minute) // Recheck every minute
+	}
+}
+
+func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
+	if m.Author.ID == s.State.User.ID {
+		return
+	}
+
+	// Load the config specific to the server
+	loadConfig(m.GuildID)
+
+	if m.Content == "!ping" {
+		s.ChannelMessageSend(m.ChannelID, "Pong!")
+		return
+	}
+
+	if strings.HasPrefix(m.Content, "!set_timezone ") {
+		timezone := strings.TrimPrefix(m.Content, "!set_timezone ")
+		timezone = strings.Trim(timezone, "\"")
+		setTimezone(s, m, timezone)
+		return
+	}
+
+	if m.Content == "!time" {
+		getCurrentTime(s, m)
+		return
+	}
+
+	if m.Content == "!timezone" {
+		getCurrentTimezone(s, m)
+		return
+	}
+
+	if strings.HasPrefix(m.Content, "!set_announcement_time ") {
+		timeStr := strings.TrimPrefix(m.Content, "!set_announcement_time ")
+		setAnnouncementTime(s, m, timeStr)
+		return
+	}
+
+	if strings.HasPrefix(m.Content, "!clear_games") {
+		clearGames(s, m)
+		return
+	}
+
+	if strings.HasPrefix(m.Content, "!games ") {
+		parts := strings.Fields(m.Content)
+		if len(parts) < 2 {
+			s.ChannelMessageSend(m.ChannelID, "Usage: !games [add/remove/list] [game]")
+			return
+		}
+
+		action := parts[1]
+
+		// Allow the "list" action without requiring a game
+		var game string
+		if action != "list" {
+			if len(parts) < 3 {
+				s.ChannelMessageSend(m.ChannelID, "Usage: !games [add/remove/list] [game]")
+				return
+			}
+			game = strings.Join(parts[2:], " ")
+		}
+
+		listGames(s, m, action, game)
+		return
+	}
+}
+
 func setTimezone(s *discordgo.Session, m *discordgo.MessageCreate, timezone string) {
 	loc, err := time.LoadLocation(timezone)
 	if err != nil {
 		s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Invalid timezone: %s", timezone))
 		return
 	}
-	config.Timezone = timezone // Save timezone to config
-	saveConfig(m.GuildID)      // Persist changes for this server
+	config.Timezone = timezone
+	saveConfig(m.GuildID)
 	serverTimezone = loc
 	s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Timezone set to %s", timezone))
 }
 
+func getCurrentTime(s *discordgo.Session, m *discordgo.MessageCreate) {
+	if config.Timezone == "" {
+		s.ChannelMessageSend(m.ChannelID, "Timezone not set. Use !set_timezone to set the timezone.")
+		return
+	}
+	loc, _ := time.LoadLocation(config.Timezone)
+	currentTime := time.Now().In(loc).Format("15:04:05 MST")
+	s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Current time: %s", currentTime))
+}
+
+func getCurrentTimezone(s *discordgo.Session, m *discordgo.MessageCreate) {
+	if config.Timezone == "" {
+		s.ChannelMessageSend(m.ChannelID, "Timezone not set. Use !set_timezone to set the timezone.")
+		return
+	}
+	s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Current timezone: %s", config.Timezone))
+}
+
+// Function for clearing all games
+func clearGames(s *discordgo.Session, m *discordgo.MessageCreate) {
+	config.Games = []string{} // Reset the games slice to an empty slice
+	saveConfig(m.GuildID)     // Persist changes for this server
+	s.ChannelMessageSend(m.ChannelID, "All games have been cleared from the list.")
+}
+
+// Reverting the game management logic to your original implementation
 func listGames(s *discordgo.Session, m *discordgo.MessageCreate, action, game string) {
 	switch action {
 	case "add":
@@ -123,118 +310,5 @@ func listGames(s *discordgo.Session, m *discordgo.MessageCreate, action, game st
 		}
 	default:
 		s.ChannelMessageSend(m.ChannelID, "Invalid action. Use add/remove/list.")
-	}
-}
-
-func clearGames(s *discordgo.Session, m *discordgo.MessageCreate) {
-	config.Games = []string{} // Reset the games slice to an empty slice
-	saveConfig(m.GuildID)     // Persist changes for this server
-	s.ChannelMessageSend(m.ChannelID, "All games have been cleared from the list.")
-}
-
-func getCurrentTime(s *discordgo.Session, m *discordgo.MessageCreate) {
-	if config.Timezone == "" {
-		s.ChannelMessageSend(m.ChannelID, "Timezone not set. Use !set_timezone to set the timezone.")
-		return
-	}
-	loc, _ := time.LoadLocation(config.Timezone)
-	currentTime := time.Now().In(loc).Format("15:04:05 MST")
-	s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Current time: %s", currentTime))
-}
-
-func getCurrentTimezone(s *discordgo.Session, m *discordgo.MessageCreate) {
-	if config.Timezone == "" {
-		s.ChannelMessageSend(m.ChannelID, "Timezone not set. Use !set_timezone to set the timezone.")
-		return
-	}
-	s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Current timezone: %s", config.Timezone))
-}
-
-var announcementTime string
-
-func setAnnouncementTime(s *discordgo.Session, m *discordgo.MessageCreate, time string) {
-	announcementTime = time
-	config.Announcement = time // Save announcement time to config
-	saveConfig(m.GuildID)      // Persist changes for this server
-	s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Announcement time set to %s", time))
-}
-
-func announceGame(s *discordgo.Session, channelID string) {
-	rand.Seed(time.Now().UnixNano())
-	if len(config.Games) == 0 {
-		s.ChannelMessageSend(channelID, "No games available to announce.")
-		return
-	}
-	selectedGame := config.Games[rand.Intn(len(config.Games))]
-	s.ChannelMessageSend(channelID, fmt.Sprintf("Tonight's game is %s! Click 'Join' if you have the game.", selectedGame))
-}
-
-func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
-	if m.Author.ID == s.State.User.ID {
-		return
-	}
-
-	// Load the config specific to the server
-	loadConfig(m.GuildID)
-
-	if m.Content == "!ping" {
-		s.ChannelMessageSend(m.ChannelID, "Pong!")
-		return
-	}
-
-	if m.Content == "!miaou" {
-		s.ChannelMessageSend(m.ChannelID, "ti kaneis re malaka 💀")
-		return
-	}
-
-	if strings.HasPrefix(m.Content, "!set_timezone ") {
-		timezone := strings.TrimPrefix(m.Content, "!set_timezone ")
-		timezone = strings.Trim(timezone, "\"")
-		setTimezone(s, m, timezone)
-		return
-	}
-
-	if m.Content == "!time" {
-		getCurrentTime(s, m)
-		return
-	}
-
-	if m.Content == "!timezone" {
-		getCurrentTimezone(s, m)
-		return
-	}
-
-	if strings.HasPrefix(m.Content, "!set_announcement_time ") {
-		time := strings.TrimPrefix(m.Content, "!set_announcement_time ")
-		setAnnouncementTime(s, m, time)
-		return
-	}
-
-	if strings.HasPrefix(m.Content, "!clear_games") {
-		clearGames(s, m)
-		return
-	}
-
-	if strings.HasPrefix(m.Content, "!games ") {
-		parts := strings.Fields(m.Content)
-		if len(parts) < 2 {
-			s.ChannelMessageSend(m.ChannelID, "Usage: !games [add/remove/list] [game]")
-			return
-		}
-
-		action := parts[1]
-
-		// Allow the "list" action without requiring a game
-		var game string
-		if action != "list" {
-			if len(parts) < 3 {
-				s.ChannelMessageSend(m.ChannelID, "Usage: !games [add/remove/list] [game]")
-				return
-			}
-			game = strings.Join(parts[2:], " ")
-		}
-
-		listGames(s, m, action, game)
-		return
 	}
 }
