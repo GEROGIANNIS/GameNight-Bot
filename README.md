@@ -5,26 +5,28 @@ GameNight Bot is designed to organize nightly game sessions within a Discord ser
 
 ## Commands
 
-- `!ping`: Test if the bot is responding.
-- `!set_timezone [timezone]`: Set the timezone for the server (e.g., `!set_timezone America/New_York`).
-- `!time`: Get the current time based on the server's timezone.
-- `!timezone`: Display the current timezone set for the server.
-- `!set_announcement_time [time]`: Set a time for announcements (e.g., `!set_announcement_time 18:00`).
-- `!games [add/remove/list] [game]`: Manage the list of games.
-  - Example: `!games add Chess`, `!games remove Monopoly`, `!games list`.
-- `!clear_games`: Remove all games from the list.
-- `!join`: Confirm participation in the game night.
-- `!leave`: Leave the participation list.
-- `!participants`: List all users confirmed for participation.
+| Command                          | Description                                           |
+|----------------------------------|-------------------------------------------------------|
+| `!ping`                          | Check if the bot is running.                         |
+| `!set_timezone [timezone]`      | Set the server's timezone (e.g., "America/New_York"). |
+| `!set_announcement_time [HH:MM]`| Set the time for daily announcements (24-hour format). |
+| `!time`                          | Get the current time in the set timezone.            |
+| `!timezone`                      | Get the current timezone set for the server.         |
+| `!games [add/remove/list] [game]`| Manage the list of games.                          |
+| `!clear_games`                  | Clear the list of games.                             |
+| `!join`                          | Confirm participation for the game.                  |
+| `!leave`                         | Remove participation from the game.                  |
+| `!participants`                  | List all confirmed participants.                     |
+
 
 ## Configuration
 
-The bot creates a separate configuration file for each server it is added to, named `config_<serverID>.json`. This file contains:
+The bot will automatically create a configuration file in a `config` directory for each server it is invited to. The configuration includes:
 
-- **Games**: List of games for that server.
-- **Timezone**: The server's timezone setting.
-- **Announcement Time**: The time set for game night announcements.
-- **Participation List**: List of users who confirmed participation.
+- List of games
+- Timezone for announcements
+- Announcement time
+- List of participants
 
 ## Acknowledgements
 
