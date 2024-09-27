@@ -18,6 +18,7 @@ type Config struct {
 	Timezone          string   `json:"timezone"`
 	Announcement      string   `json:"announcement"`  // Announcement time in "HH:MM" 24-hour format
 	ParticipationList []string `json:"participation"` // List of users who confirmed participation
+	VoiceChannelID    string   `json:"voice_channel"` // ID of the currently active voice channel
 }
 
 var configDir = "config"
@@ -125,9 +126,9 @@ func createVoiceChannel(s *discordgo.Session, guildID, gameName string) (string,
 	// Prepare permission overwrites
 	permissionOverwrites := []*discordgo.PermissionOverwrite{
 		{
-			ID:    guildID, // Use the guild ID for @everyone
-			Type:  discordgo.PermissionOverwriteTypeRole,
-			Deny:  discordgo.PermissionViewChannel, // Deny view and connect permissions
+			ID:   guildID, // Use the guild ID for @everyone
+			Type: discordgo.PermissionOverwriteTypeRole,
+			Deny: discordgo.PermissionViewChannel, // Deny view and connect permissions
 		},
 	}
 
@@ -152,12 +153,12 @@ func createVoiceChannel(s *discordgo.Session, guildID, gameName string) (string,
 }
 
 // Update voice channel permissions based on the ParticipationList
-func updateVoiceChannelPermissions(s *discordgo.Session, channelID string) {
+func updateVoiceChannelPermissions(s *discordgo.Session, channelID string, guildID string) {
 	permissionOverwrites := []*discordgo.PermissionOverwrite{
 		{
-			ID:    channelID, // Use the channel ID for @everyone
-			Type:  discordgo.PermissionOverwriteTypeRole,
-			Deny:  discordgo.PermissionViewChannel , // Deny view and connect permissions
+			ID:   guildID, // Use the guild ID for @everyone
+			Type: discordgo.PermissionOverwriteTypeRole,
+			Deny: discordgo.PermissionViewChannel, // Deny view and connect permissions
 		},
 	}
 
@@ -206,6 +207,9 @@ func announceGame(s *discordgo.Session, guildID string) {
 	if err != nil {
 		log.Printf("Error creating voice channel: %v", err)
 		voiceChannelID = "" // If creation fails, continue with text announcement
+	} else {
+		config.VoiceChannelID = voiceChannelID
+		saveConfig(guildID)
 	}
 
 	// Find the #todays-game channel and announce the game there
@@ -221,14 +225,9 @@ func announceGame(s *discordgo.Session, guildID string) {
 
 	// Schedule voice channel deletion after the game ends (e.g., 3 hours later)
 	go func() {
-		time.Sleep(3 * time.Hour) // Adjust game duration as needed
+		time.Sleep(15 * time.Second) // Adjust game duration as needed
 		deleteVoiceChannel(s, voiceChannelID)
 	}()
-}
-
-// Call this function whenever the ParticipationList changes to update permissions
-func onParticipationListChange(s *discordgo.Session, channelID string) {
-	updateVoiceChannelPermissions(s, channelID)
 }
 
 // Start the announcement scheduler
@@ -375,13 +374,13 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 	}
 
 	if m.Content == "!join" {
-		joinParticipation(s, m)
+		joinParticipation(s, m, m.GuildID)
 		return
 	}
 
 	// Add the new command for participants
 	if m.Content == "!leave" {
-		leaveParticipation(s, m)
+		leaveParticipation(s, m, m.GuildID)
 		return
 	}
 
@@ -472,7 +471,7 @@ func listGames(s *discordgo.Session, m *discordgo.MessageCreate, action, game st
 	}
 }
 
-func joinParticipation(s *discordgo.Session, m *discordgo.MessageCreate) {
+func joinParticipation(s *discordgo.Session, m *discordgo.MessageCreate, guildID string) {
 	if config.ParticipationList == nil {
 		config.ParticipationList = []string{}
 	}
@@ -488,9 +487,12 @@ func joinParticipation(s *discordgo.Session, m *discordgo.MessageCreate) {
 	config.ParticipationList = append(config.ParticipationList, m.Author.ID) // Add user to participation
 	saveConfig(m.GuildID)                                                    // Persist changes for this server
 	s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("%s confirmed participation!", m.Author.Username))
+
+	// Update voice channel permissions
+	updateVoiceChannelPermissions(s, config.VoiceChannelID, guildID)
 }
 
-func leaveParticipation(s *discordgo.Session, m *discordgo.MessageCreate) {
+func leaveParticipation(s *discordgo.Session, m *discordgo.MessageCreate, guildID string) {
 	if config.ParticipationList == nil {
 		s.ChannelMessageSend(m.ChannelID, "No participants to leave from.")
 		return
@@ -499,7 +501,9 @@ func leaveParticipation(s *discordgo.Session, m *discordgo.MessageCreate) {
 	for i, participant := range config.ParticipationList {
 		if participant == m.Author.ID {
 			config.ParticipationList = append(config.ParticipationList[:i], config.ParticipationList[i+1:]...) // Remove user from participation
-			saveConfig(m.GuildID)                                                                              // Persist changes for this server
+			saveConfig(m.GuildID)
+			updateVoiceChannelPermissions(s, config.VoiceChannelID, guildID)
+			// Persist changes for this server
 			s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("%s has left the participation list.", m.Author.Username))
 			return
 		}
