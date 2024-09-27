@@ -6,6 +6,7 @@
 				"log"
 				"math/rand"
 				"os"
+				"path/filepath"
 				"strings"
 				"time"
 
@@ -19,10 +20,10 @@
 				ParticipationList []string `json:"participation"` // List of users who confirmed participation
 			}
 
-			var configFileTemplate = "config_%s.json"
-			var config Config
-			var serverTimezone *time.Location
-			var updateAnnouncementCh = make(chan struct{}) // Channel to signal announcement time updates
+var configDir = "config"
+var configFileTemplate = "config_%s.json"
+var config Config
+var updateAnnouncementCh = make(chan struct{}) // Channel to signal announcement time updates
 
 			func main() {
 				token := os.Getenv("DISCORD_TOKEN")
@@ -51,7 +52,7 @@
 			}
 
 			func loadConfig(serverID string) {
-				configFile := fmt.Sprintf(configFileTemplate, serverID)
+				configFile := filepath.Join(configDir, fmt.Sprintf(configFileTemplate, serverID))
 				file, err := os.Open(configFile)
 				if err != nil {
 					if os.IsNotExist(err) {
@@ -69,7 +70,10 @@
 			}
 
 			func saveConfig(serverID string) {
-				configFile := fmt.Sprintf(configFileTemplate, serverID)
+				if err := os.MkdirAll(configDir, os.ModePerm); err != nil {
+					log.Fatal("Error creating config directory:", err)
+				}
+				configFile := filepath.Join(configDir, fmt.Sprintf(configFileTemplate, serverID))
 				file, err := os.Create(configFile)
 				if err != nil {
 					log.Fatal("Error creating config file:", err)
