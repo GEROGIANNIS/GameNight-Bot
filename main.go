@@ -13,12 +13,23 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
+// Config holds configuration settings for the bot.
 type Config struct {
-	Games             []string `json:"games"`
-	Timezone          string   `json:"timezone"`
-	Announcement      string   `json:"announcement"`  // Announcement time in "HH:MM" 24-hour format
+	Games        []string `json:"games"`
+	Timezone     string   `json:"timezone"`
+	Announcement string   `json:"announcement"` // Announcement time in "HH:MM" 24-hour format
+
 	ParticipationList []string `json:"participation"` // List of users who confirmed participation
 }
+
+// GameSession holds information about the active game session.
+type GameSession struct {
+	ChannelID    string   // ID of the voice channel
+	Participants []string // List of participants' IDs
+}
+
+// Map to store active game sessions by guild ID.
+var activeGameSessions = make(map[string]*GameSession)
 
 var configDir = "config"
 var configFileTemplate = "config_%s.json"
@@ -117,19 +128,53 @@ func findTodaysGameChannel(s *discordgo.Session, guildID string) (string, error)
 	return "", fmt.Errorf("todays-game channel not found")
 }
 
-// Create a voice channel
-// Create a voice channel with a dynamic name based on the game
+const PermissionConnect = 0x00000010 // The permission bit for connecting to voice channels
+
+// Create a private voice channel with permissions based on the participation list
 func createVoiceChannel(s *discordgo.Session, guildID, gameName string) (string, error) {
 	// Construct the channel name: "GameNight - <game_name>"
 	channelName := fmt.Sprintf("GameNight - %s", gameName)
 
-	channel, err := s.GuildChannelCreate(guildID, channelName, discordgo.ChannelTypeGuildVoice)
+	// Get the guild to retrieve the @everyone role ID
+	guild, err := s.Guild(guildID)
+	if err != nil {
+		return "", fmt.Errorf("error fetching guild: %v", err)
+	}
+
+	// Find the @everyone role
+	var everyoneRoleID string
+	for _, role := range guild.Roles {
+		if role.Name == "@everyone" {
+			everyoneRoleID = role.ID
+			break
+		}
+	}
+
+	if everyoneRoleID == "" {
+		return "", fmt.Errorf("could not find @everyone role in guild %s", guildID)
+	}
+
+	// Create permission overwrites
+	permissionOverwrites := []*discordgo.PermissionOverwrite{
+		{
+			ID:   everyoneRoleID, // Use the ID of the @everyone role
+			Type: discordgo.PermissionOverwriteTypeRole,
+			Deny: PermissionConnect, // Deny joining
+		},
+	}
+
+	// Create the voice channel with the specified permissions
+	channel, err := s.GuildChannelCreateComplex(guildID, discordgo.GuildChannelCreateData{
+		Name:                 channelName,
+		Type:                 discordgo.ChannelTypeGuildVoice,
+		PermissionOverwrites: permissionOverwrites,
+	})
 	if err != nil {
 		return "", fmt.Errorf("error creating voice channel: %v", err)
 	}
+
 	return channel.ID, nil
 }
-
 
 // Delete the voice channel
 func deleteVoiceChannel(s *discordgo.Session, channelID string) {
@@ -139,9 +184,13 @@ func deleteVoiceChannel(s *discordgo.Session, channelID string) {
 	}
 }
 
-// Announce a game in the #todays-game channel and create a voice channel
-// Announce a game in the #todays-game channel and create a voice channel
 func announceGame(s *discordgo.Session, guildID string) {
+	// Check if there is already an active game session for this guild
+	if _, exists := activeGameSessions[guildID]; exists {
+		log.Println("Game session already exists for this guild. Skipping announcement.")
+		return // Skip the announcement if a session already exists
+	}
+
 	rand.Seed(time.Now().UnixNano())
 	if len(config.Games) == 0 {
 		log.Println("No games available to announce.")
@@ -154,6 +203,7 @@ func announceGame(s *discordgo.Session, guildID string) {
 		s.ChannelMessageSend(channelID, "No games available to announce today.")
 		return
 	}
+
 	selectedGame := config.Games[rand.Intn(len(config.Games))]
 
 	// Create a voice channel named "GameNight - <game_name>"
@@ -161,6 +211,12 @@ func announceGame(s *discordgo.Session, guildID string) {
 	if err != nil {
 		log.Printf("Error creating voice channel: %v", err)
 		voiceChannelID = "" // If creation fails, continue with text announcement
+	}
+
+	// Store the new game session
+	activeGameSessions[guildID] = &GameSession{
+		ChannelID:    voiceChannelID,
+		Participants: []string{}, // Initialize with an empty list
 	}
 
 	// Find the #todays-game channel and announce the game there
@@ -176,11 +232,11 @@ func announceGame(s *discordgo.Session, guildID string) {
 
 	// Schedule voice channel deletion after the game ends (e.g., 3 hours later)
 	go func() {
-		time.Sleep(3 * time.Hour) // Adjust game duration as needed
+		time.Sleep(7 * time.Hour) // Adjust game duration as needed
 		deleteVoiceChannel(s, voiceChannelID)
+		delete(activeGameSessions, guildID) // Remove the session after deletion
 	}()
 }
-
 
 // Start the announcement scheduler
 func startAnnouncementScheduler(s *discordgo.Session) {
@@ -424,21 +480,33 @@ func listGames(s *discordgo.Session, m *discordgo.MessageCreate, action, game st
 }
 
 func joinParticipation(s *discordgo.Session, m *discordgo.MessageCreate) {
-	if config.ParticipationList == nil {
-		config.ParticipationList = []string{}
+	// Get the game session for the guild
+	session, exists := activeGameSessions[m.GuildID]
+	if !exists {
+		s.ChannelMessageSend(m.ChannelID, "No active game session found.")
+		return
 	}
 
 	// Check if the user is already in the participation list
-	for _, participant := range config.ParticipationList {
+	for _, participant := range session.Participants {
 		if participant == m.Author.ID {
 			s.ChannelMessageSend(m.ChannelID, "You are already confirmed for participation.")
 			return
 		}
 	}
 
-	config.ParticipationList = append(config.ParticipationList, m.Author.ID) // Add user to participation
-	saveConfig(m.GuildID)                                                    // Persist changes for this server
-	s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("%s confirmed participation!", m.Author.Username))
+	// Add user to participation using their user ID
+	session.Participants = append(session.Participants, m.Author.ID)
+
+	// Allow the user to connect to the voice channel (0x00000004 is the permission bit for connect)
+	err := s.ChannelPermissionSet(session.ChannelID, m.Author.ID, discordgo.PermissionOverwriteTypeMember, 0x00000004, 0)
+	if err != nil {
+		log.Printf("Error allowing user to join voice channel: %v", err)
+		s.ChannelMessageSend(m.ChannelID, "Error updating permissions for the voice channel.")
+		return
+	}
+
+	s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("%s confirmed participation and can now join the voice channel!", m.Author.Username))
 }
 
 func leaveParticipation(s *discordgo.Session, m *discordgo.MessageCreate) {
