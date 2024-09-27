@@ -347,31 +347,41 @@
 				s.ChannelMessageSend(m.ChannelID, "Game list cleared.")
 			}
 
-			func listGames(s *discordgo.Session, m *discordgo.MessageCreate, action, game string) {
-				if action == "add" {
-					config.Games = append(config.Games, game)
-					saveConfig(m.GuildID) // Persist changes for this server
-					s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Game added: %s", game))
-				} else if action == "remove" {
-					for i, g := range config.Games {
-						if g == game {
-							config.Games = append(config.Games[:i], config.Games[i+1:]...) // Remove game
-							saveConfig(m.GuildID)                                          // Persist changes for this server
-							s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Game removed: %s", game))
-							return
-						}
-					}
-					s.ChannelMessageSend(m.ChannelID, "Game not found in the list.")
-				} else if action == "list" {
-					if len(config.Games) == 0 {
-						s.ChannelMessageSend(m.ChannelID, "No games found.")
-						return
-					}
-					s.ChannelMessageSend(m.ChannelID, "Current games: "+strings.Join(config.Games, ", "))
-				} else {
-					s.ChannelMessageSend(m.ChannelID, "Invalid action. Use add/remove/list.")
-				}
+func listGames(s *discordgo.Session, m *discordgo.MessageCreate, action, game string) {
+	switch action {
+	case "add":
+		config.Games = append(config.Games, game)
+		saveConfig(m.GuildID) // Persist changes for this server
+		s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Game added: %s", game))
+
+	case "remove":
+		for i, g := range config.Games {
+			if g == game {
+				config.Games = append(config.Games[:i], config.Games[i+1:]...) // Remove game
+				saveConfig(m.GuildID)                                          // Persist changes for this server
+				s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Game removed: %s", game))
+				return
 			}
+		}
+		s.ChannelMessageSend(m.ChannelID, "Game not found in the list.")
+
+	case "list":
+		if len(config.Games) == 0 {
+			s.ChannelMessageSend(m.ChannelID, "No games found.")
+			return
+		}
+
+		gameList := "Games in the list:\n"
+		for _, g := range config.Games {
+			gameList += fmt.Sprintf("- %s\n", g)
+		}
+		s.ChannelMessageSend(m.ChannelID, gameList)
+
+	default:
+		s.ChannelMessageSend(m.ChannelID, "Invalid action. Use add/remove/list.")
+	}
+}
+
 
 			func joinParticipation(s *discordgo.Session, m *discordgo.MessageCreate) {
 				if config.ParticipationList == nil {
