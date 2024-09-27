@@ -419,20 +419,26 @@ func listGames(s *discordgo.Session, m *discordgo.MessageCreate, action, game st
 				s.ChannelMessageSend(m.ChannelID, "You are not on the participation list.")
 			}
 
-			func listParticipants(s *discordgo.Session, m *discordgo.MessageCreate) {
-				if len(config.ParticipationList) == 0 {
-					s.ChannelMessageSend(m.ChannelID, "No participants yet.")
-					return
-				}
+func listParticipants(s *discordgo.Session, m *discordgo.MessageCreate) {
+	if len(config.ParticipationList) == 0 {
+		s.ChannelMessageSend(m.ChannelID, "No participants yet.")
+		return
+	}
 
-				// Create a list of usernames from user IDs
-				var participants []string
-				for _, participantID := range config.ParticipationList {
-					user, err := s.User(participantID)
-					if err == nil {
-						participants = append(participants, user.Username)
-					}
-				}
+	// Create a list of usernames from user IDs
+	var participants []string
+	for _, participantID := range config.ParticipationList {
+		user, err := s.User(participantID)
+		if err == nil {
+			participants = append(participants, user.Username)
+		}
+	}
 
-				s.ChannelMessageSend(m.ChannelID, "Participants: "+strings.Join(participants, ", "))
-			}
+	// Build the participant list message
+	participantList := "Participants:\n"
+	for _, username := range participants {
+		participantList += fmt.Sprintf("- %s\n", username)
+	}
+
+	s.ChannelMessageSend(m.ChannelID, participantList)
+}
