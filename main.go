@@ -117,19 +117,65 @@ func findTodaysGameChannel(s *discordgo.Session, guildID string) (string, error)
 	return "", fmt.Errorf("todays-game channel not found")
 }
 
-// Create a voice channel
 // Create a voice channel with a dynamic name based on the game
 func createVoiceChannel(s *discordgo.Session, guildID, gameName string) (string, error) {
 	// Construct the channel name: "GameNight - <game_name>"
 	channelName := fmt.Sprintf("GameNight - %s", gameName)
 
-	channel, err := s.GuildChannelCreate(guildID, channelName, discordgo.ChannelTypeGuildVoice)
+	// Prepare permission overwrites
+	permissionOverwrites := []*discordgo.PermissionOverwrite{
+		{
+			ID:    guildID, // Use the guild ID for @everyone
+			Type:  discordgo.PermissionOverwriteTypeRole,
+			Deny:  discordgo.PermissionViewChannel, // Deny view and connect permissions
+		},
+	}
+
+	for _, userID := range config.ParticipationList {
+		permissionOverwrites = append(permissionOverwrites, &discordgo.PermissionOverwrite{
+			ID:    userID,
+			Type:  discordgo.PermissionOverwriteTypeMember,
+			Allow: discordgo.PermissionViewChannel, // Allow viewing and connecting
+		})
+	}
+
+	// Create the channel with permission overwrites
+	channel, err := s.GuildChannelCreateComplex(guildID, discordgo.GuildChannelCreateData{
+		Name:                 channelName,
+		Type:                 discordgo.ChannelTypeGuildVoice,
+		PermissionOverwrites: permissionOverwrites,
+	})
 	if err != nil {
 		return "", fmt.Errorf("error creating voice channel: %v", err)
 	}
 	return channel.ID, nil
 }
 
+// Update voice channel permissions based on the ParticipationList
+func updateVoiceChannelPermissions(s *discordgo.Session, channelID string) {
+	permissionOverwrites := []*discordgo.PermissionOverwrite{
+		{
+			ID:    channelID, // Use the channel ID for @everyone
+			Type:  discordgo.PermissionOverwriteTypeRole,
+			Deny:  discordgo.PermissionViewChannel , // Deny view and connect permissions
+		},
+	}
+
+	for _, userID := range config.ParticipationList {
+		permissionOverwrites = append(permissionOverwrites, &discordgo.PermissionOverwrite{
+			ID:    userID,
+			Type:  discordgo.PermissionOverwriteTypeMember,
+			Allow: discordgo.PermissionViewChannel,
+		})
+	}
+
+	// Update the channel's permission overwrites
+	if _, err := s.ChannelEditComplex(channelID, &discordgo.ChannelEdit{
+		PermissionOverwrites: permissionOverwrites,
+	}); err != nil {
+		log.Printf("Error updating voice channel permissions: %v", err)
+	}
+}
 
 // Delete the voice channel
 func deleteVoiceChannel(s *discordgo.Session, channelID string) {
@@ -139,7 +185,6 @@ func deleteVoiceChannel(s *discordgo.Session, channelID string) {
 	}
 }
 
-// Announce a game in the #todays-game channel and create a voice channel
 // Announce a game in the #todays-game channel and create a voice channel
 func announceGame(s *discordgo.Session, guildID string) {
 	rand.Seed(time.Now().UnixNano())
@@ -181,6 +226,10 @@ func announceGame(s *discordgo.Session, guildID string) {
 	}()
 }
 
+// Call this function whenever the ParticipationList changes to update permissions
+func onParticipationListChange(s *discordgo.Session, channelID string) {
+	updateVoiceChannelPermissions(s, channelID)
+}
 
 // Start the announcement scheduler
 func startAnnouncementScheduler(s *discordgo.Session) {
