@@ -14,6 +14,7 @@ import (
 )
 
 type Config struct {
+	ServerID          string   `json:"serverID"`
 	Games             []string `json:"games"`
 	Timezone          string   `json:"timezone"`
 	Announcement      string   `json:"announcement"`  // Announcement time in "HH:MM" 24-hour format
@@ -75,6 +76,7 @@ func saveConfig(serverID string) {
 		log.Fatal("Error creating config directory:", err)
 	}
 	configFile := filepath.Join(configDir, fmt.Sprintf(configFileTemplate, serverID))
+	config.ServerID = serverID
 	file, err := os.Create(configFile)
 	if err != nil {
 		log.Fatal("Error creating config file:", err)
@@ -104,7 +106,7 @@ func setAnnouncementTime(s *discordgo.Session, m *discordgo.MessageCreate, timeS
 
 // Find the #todays-game channel in the guild and return its ID
 func findTodaysGameChannel(s *discordgo.Session, guildID string) (string, error) {
-	channels, err := s.GuildChannels(guildID)
+	channels, err := s.GuildChannels(config.ServerID)
 	if err != nil {
 		return "", fmt.Errorf("error retrieving channels: %v", err)
 	}
@@ -192,7 +194,7 @@ func announceGame(s *discordgo.Session, guildID string) {
 	if len(config.Games) == 0 {
 		log.Println("No games available to announce.")
 		// Find the #todays-game channel and announce that there are no games available
-		channelID, err := findTodaysGameChannel(s, guildID)
+		channelID, err := findTodaysGameChannel(s, config.ServerID)
 		if err != nil {
 			log.Println("Error finding #todays-game channel:", err)
 			return
@@ -213,7 +215,7 @@ func announceGame(s *discordgo.Session, guildID string) {
 	}
 
 	// Find the #todays-game channel and announce the game there
-	channelID, err := findTodaysGameChannel(s, guildID)
+	channelID, err := findTodaysGameChannel(s, config.ServerID)
 	if err != nil {
 		log.Println("Error finding #todays-game channel:", err)
 		return
@@ -380,7 +382,7 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 
 	// Add the new command for participants
 	if m.Content == "!leave" {
-		leaveParticipation(s, m, m.GuildID)
+		leaveParticipation(s, m, config.ServerID)
 		return
 	}
 
