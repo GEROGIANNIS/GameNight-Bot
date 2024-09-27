@@ -502,9 +502,9 @@ func leaveParticipation(s *discordgo.Session, m *discordgo.MessageCreate, guildI
 		if participant == m.Author.ID {
 			config.ParticipationList = append(config.ParticipationList[:i], config.ParticipationList[i+1:]...) // Remove user from participation
 			saveConfig(m.GuildID)
-			updateVoiceChannelPermissions(s, config.VoiceChannelID, guildID)
 			// Persist changes for this server
 			s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("%s has left the participation list.", m.Author.Username))
+			updateVoiceChannelPermissions(s, config.VoiceChannelID, guildID)
 			return
 		}
 	}
