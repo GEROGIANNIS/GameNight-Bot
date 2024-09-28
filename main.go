@@ -317,7 +317,26 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 	}
 
 	// Load the config specific to the server
-	loadConfig(m.GuildID)
+	loadConfig(config.ServerID)
+
+	if m.Content == "!help" {
+		helpMessage := `
+**Bot Commands:**
+- !ping: Check if the bot is running.
+- !set_timezone [timezone]: Set the server's timezone (e.g., "America/New_York").
+- !set_announcement_time [HH:MM]: Set the time for daily announcements (24-hour format).
+- !time: Get the current time in the set timezone.
+- !timezone: Get the current timezone set for the server.
+- !games [add/remove/list] [game]: Manage the list of games.
+- !clear_games: Clear the list of games.
+- !join: Confirm participation for the game.
+- !leave: Remove participation from the game.
+- !participants: List all confirmed participants.
+- !help: Display this help message.
+`
+		s.ChannelMessageSend(m.ChannelID, helpMessage)
+		return
+	}
 
 	if m.Content == "!ping" {
 		s.ChannelMessageSend(m.ChannelID, "Pong!")
