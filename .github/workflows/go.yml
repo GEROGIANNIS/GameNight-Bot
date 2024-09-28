@@ -23,5 +23,5 @@ jobs:
 
       - name: Run the bot
         env:
-          MY_TOKEN: ${{ secrets.DISCORD_TOKEN }}  # Reference the secret
+          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}  # Reference the secret
         run: go run main.go
